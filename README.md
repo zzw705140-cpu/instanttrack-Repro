@@ -24,8 +24,9 @@ conda activate instanttrack
 sed -e '/^cd "$(dirname "$0")\/.."$/d' -e 's/uv run python/python/g' tools/download_data.sh | bash
 ```
 
-首次使用 W&B 的机器需先运行 `wandb login`。默认空间为 `zzw705140-`，其他使用者
-可设置 `WANDB_ENTITY` 为自己的空间，或设为空以使用 SDK 默认空间。
+首次使用 W&B 的机器需先运行 `wandb login`。新实验沿用运行机器已有的 W&B 服务地址、
+登录凭据和默认空间，不写死账户；如需指定团队空间，可设置 `WANDB_ENTITY`。
+恢复训练与后续评估沿用原实验保存的身份，不会自动转移到其他账户。
 
 ```bash
 # 冒烟测试：训练后自动评估；不要以此判断策略质量。
@@ -658,8 +659,9 @@ licenses below.
 ### Local W&B integration
 
 `scripts/train.sh` now enables training-metric uploads by default, using the machine's
-existing W&B credentials. Defaults: project `instanttrack`, entity `zzw705140-`
-(as in RoboForge), run name equal to the command's run name, logging every 50 iterations.
+existing W&B credentials and service configuration. Defaults: project `instanttrack`,
+entity selected by the SDK from the machine's configuration, run name equal to the
+command's run name, logging every 50 iterations. No account or service URL is hard-coded.
 No login command or API key is embedded in the script. Checkpoints remain local;
 evaluation metrics are appended to the same W&B run after training.
 

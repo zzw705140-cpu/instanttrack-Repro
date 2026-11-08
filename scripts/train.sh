@@ -16,7 +16,7 @@ P=${1:?preset}; RUN=${2:?run name}; shift 2
 WANDB_ENABLED="${WANDB_ENABLED:-true}"
 WANDB_DEBUG="${WANDB_DEBUG:-false}"          # true：调用日志接口但禁用上传
 WANDB_PROJECT="${WANDB_PROJECT:-instanttrack}"
-WANDB_ENTITY="${WANDB_ENTITY-zzw705140-}"     # 沿用 RoboForge；设为空则由 SDK 选择默认空间
+WANDB_ENTITY="${WANDB_ENTITY-}"             # 默认不指定空间，沿用运行机器的 W&B 配置
 WANDB_NAME="${WANDB_NAME:-$RUN}"
 WANDB_LOG_EVERY="${WANDB_LOG_EVERY:-50}"      # 与本地 CSV 共用记录频率
 

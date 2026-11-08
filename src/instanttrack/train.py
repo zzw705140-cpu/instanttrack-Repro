@@ -1,5 +1,7 @@
 """SuperMimic training (SuperMimic paper, Algorithm A.1): collect -> fit world model -> BPTT policy + critic update."""
 
+# 训练脚本
+
 from __future__ import annotations
 
 import argparse
