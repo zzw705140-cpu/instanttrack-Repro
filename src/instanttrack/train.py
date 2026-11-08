@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import atexit
 import copy
 import json
 import math
@@ -15,6 +16,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--robot", type=str, default="g1", help="robot package under instanttrack/ (g1)")
+
+#并行环境数 --num_envs
 parser.add_argument("--num_envs", type=int, default=4096)
 parser.add_argument("--iterations", type=int, default=320_000)
 parser.add_argument("--buffer_steps", type=int, default=1000)
@@ -28,6 +31,8 @@ parser.add_argument("--batch_goal_enc", action="store_true",
 parser.add_argument("--hist", type=int, default=10)
 parser.add_argument("--wm_window", type=int, default=8)
 parser.add_argument("--wm_batches", type=int, default=10)
+
+# 策略批量 --pi_batch
 parser.add_argument("--wm_batch", type=int, default=2048)
 parser.add_argument("--pi_batch", type=int, default=4096)
 parser.add_argument("--lr", type=float, default=2e-4)
@@ -153,8 +158,20 @@ parser.add_argument("--motion_dir", type=str, default=None, help="defaults to th
 parser.add_argument("--log_dir", type=str, default=os.path.join(REPO, "logs", "run"))
 parser.add_argument("--seed", type=int, default=0)
 parser.add_argument("--resume", type=str, default=None)
+parser.add_argument("--wandb", action="store_true", help="upload training metrics using existing W&B credentials")
+parser.add_argument("--wandb_debug", action="store_true", help="exercise W&B logging without uploading")
+parser.add_argument("--wandb_project", default="instanttrack")
+parser.add_argument("--wandb_entity", default=None)
+parser.add_argument("--wandb_name", default=None)
 parser.add_argument("--amp", type=str, default="bf16", choices=["none", "bf16"], help="autocast dtype for MLP matmuls")
 args = parser.parse_args()
+
+# Initialize before GPU setup so configuration and setup failures belong to the run.
+from instanttrack.wandb_logger import create_training_logger
+
+wandb_logger = create_training_logger(args)
+if wandb_logger is not None:
+    atexit.register(wandb_logger.finish)  # also flush on Python exceptions / Ctrl+C
 
 import torch
 import torch.nn as nn
@@ -1140,6 +1157,15 @@ for it in range(start_it, args.iterations):
             why = f"training return {row[12]:.3f} >= {args.lr_decay_ret}" if row[12] >= args.lr_decay_ret else f"deadline --lr_decay_by {args.lr_decay_by}"
             print(f"--lr_decay_ret: {why} at it {it + 1}: policy LR x{args.pi_lr_mult} -> x1 over {args.lr_decay_len} its", flush=True)
         log_f.flush()
+        if wandb_logger is not None:
+            columns = ["iteration", "wall_h", "sim_steps", "wm_loss", "wm_err8", "pi_loss", "v_loss",
+                       "imag_rew", "pi_gradnorm", "imag_survival", "sim_rew", "ep_len", "ep_ret_norm",
+                       "term_frac", "it_per_s", "lr"]
+            if LOG_EXTRA:
+                columns += ["pi_lr", "pi_mult", "nonfinite"]
+            # Reuse CPU scalars already produced for CSV; no additional GPU reads.
+            metrics = dict(zip(columns, row + extra))
+            wandb_logger.log({"iteration": it + 1, "train": metrics})
         print(f"it {it + 1} | {wall_h:.3f} h | wm {row[3]:.4f} e8 {row[4]:.4f} | pi {row[5]:.3f} v {row[6]:.4f} imag_r {row[7]:.3f} surv {row[9]:.3f} "
               f"| sim_r {row[10]:.3f} ep_len {row[11]:.1f} ep_ret {row[12]:.3f} term {term_frac:.2f} | {ips:.2f} it/s", flush=True)  # fmt: skip
         stats = {k: [] for k in stats}
@@ -1188,3 +1214,6 @@ for it in range(start_it, args.iterations):
 if CKPT_POOL is not None:  # every background checkpoint written (a failed write raises here: non-zero exit)
     ckpt_wait(drain=True)
     CKPT_POOL.shutdown()
+if wandb_logger is not None:
+    wandb_logger.finish()
+    atexit.unregister(wandb_logger.finish)

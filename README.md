@@ -1,4 +1,50 @@
-# InstantTrack
+# InstantTrack-Repro：InstantTrack 跑通复现
+
+本仓库基于 [Huy-Quang-Dao/instantTrack](https://github.com/Huy-Quang-Dao/instantTrack)
+v1.4.0（上游提交 `b9512a9`），用于学习、环境部署和训练流程的跑通复现。
+算法及上游实验结果归原作者所有；本仓库不是 InstantTrack 官方实现，也不宣称提出新算法。
+
+## 本地复现范围
+
+- 使用 Conda 环境运行，启动脚本使用当前环境的 `python`，自动加载项目 `src/` 以定位 `data/`。
+- 接入 W&B，默认上传训练指标，并将训练后的评估指标记录到同一个实验。
+- 已在 RTX 4060 Laptop（8 GB）完成小规模端到端测试：2 个训练环境、策略批量 12、
+  世界模型批量 32、200 次迭代，覆盖训练、模型保存、独立评估和 W&B 同步。
+- 该测试评估为 40/40 动作失败，仅证明流程跑通，尚未复现上游正式训练的跟踪性能。
+- 下方原始 README 中的训练时间、回报、图表和 `results/` 数据均为上游作者报告，
+  不是本仓库新增实验结果。
+
+## Conda 启动方式
+
+先激活已安装依赖的 Conda 环境，并按下方 Setup 下载动作数据和机器人模型。
+原下载脚本使用 uv；在项目根目录使用 Conda 时，可运行：
+
+```bash
+conda activate instanttrack
+sed -e '/^cd "$(dirname "$0")\/.."$/d' -e 's/uv run python/python/g' tools/download_data.sh | bash
+```
+
+首次使用 W&B 的机器需先运行 `wandb login`。默认空间为 `zzw705140-`，其他使用者
+可设置 `WANDB_ENTITY` 为自己的空间，或设为空以使用 SDK 默认空间。
+
+```bash
+# 冒烟测试：训练后自动评估；不要以此判断策略质量。
+bash scripts/train.sh instanttrack smoke_s0 \
+  --num_envs 2 --pi_batch 12 --wm_batch 32 \
+  --eprobe_active 2 --eprobe_async 0 --iterations 200 --log_every 10
+
+# 正式预设：4096 个训练环境，训练预算 30 分钟，随后额外执行评估。
+# 请在显存充足的服务器运行；8 GB 显卡未验证该配置。
+bash scripts/train.sh instanttrack normal_s0 --seed 0 --max_hours 0.5
+```
+
+`data/`、`logs/`、检查点和 Conda 环境需单独准备，不随本仓库分发。
+原始 `LICENSE`、`THIRD_PARTY_NOTICES.md` 和数据许可说明保留；代码的 MIT 许可
+不覆盖第三方动作数据或其衍生媒体。
+
+---
+
+# InstantTrack（上游 README）
 
 **Whole-body motion tracking for the Unitree G1 in about 3 minutes on one GPU.**
 InstantTrack trains a single policy for all 40 LAFAN1 clips (2.45 h of motion) to an evaluation
@@ -608,6 +654,42 @@ then converts the URDF to MJCF. The motion data is not redistributed in this rep
 licenses below.
 
 ## Training
+
+### Local W&B integration
+
+`scripts/train.sh` now enables training-metric uploads by default, using the machine's
+existing W&B credentials. Defaults: project `instanttrack`, entity `zzw705140-`
+(as in RoboForge), run name equal to the command's run name, logging every 50 iterations.
+No login command or API key is embedded in the script. Checkpoints remain local;
+evaluation metrics are appended to the same W&B run after training.
+
+Evaluation charts include `eval/norm_return`, `eval/n_failed`, and
+`eval/completion_rate` (0–1, the proportion of clips that do not fail).
+Their horizontal axis is the checkpoint iteration, independent of the training
+metric axis. Multiple replicas use separate `eval_r<N>/` charts; failure counts
+and completion rates are averaged across replicas. Model files are not uploaded.
+To evaluate manually with uploads, use
+`uv run python tools/eval_batch.py --run_dir logs/it_s0 --wandb`.
+This requires the run's saved `wandb_run.json`. On retry, existing CSV results
+are replayed to W&B so saved-but-not-uploaded results are recovered; repeated
+points may appear at the same evaluation iteration.
+
+```bash
+# Use the configured W&B project/entity (training still needs the setup above).
+bash scripts/train.sh instanttrack it_s0 --seed 0 --max_hours 0.5
+
+# Override the destination and recording interval.
+WANDB_PROJECT=instanttrack WANDB_ENTITY=your-team WANDB_LOG_EVERY=100 \
+  bash scripts/train.sh instanttrack it_s0 --seed 0 --max_hours 0.5
+
+# Disable W&B, or exercise its disabled mode without uploading.
+WANDB_ENABLED=false bash scripts/train.sh instanttrack local_s0 --max_hours 0.1
+WANDB_DEBUG=true bash scripts/train.sh instanttrack debug_s0 --max_hours 0.1
+```
+
+`WANDB_NAME` overrides the display name. Set `WANDB_ENTITY=''` to use the SDK's
+default entity. `WANDB_DEBUG=true` takes precedence over `WANDB_ENABLED`.
+Direct `python -m instanttrack.train` calls still require `--wandb` to enable uploads.
 
 Presets are defined in [`scripts/presets.sh`](scripts/presets.sh):
 

@@ -8,6 +8,8 @@ appended to ``<run_dir>/eval.csv`` (``eval_r<reps>.csv`` with --reps) in the for
 """
 
 import argparse
+import atexit
+import csv
 import glob
 import json
 import os
@@ -17,10 +19,21 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--run_dir", type=str, required=True)
 parser.add_argument("--robot", type=str, default="g1")
 parser.add_argument("--group", type=int, default=13, help="checkpoints evaluated together")
+parser.add_argument("--wandb", action="store_true", help="append evaluation metrics to the training W&B run")
+parser.add_argument("--wandb_debug", action="store_true", help="exercise evaluation logging without uploading")
 parser.add_argument("--reps", type=int, default=1,
                     help="independent replicas of every clip per checkpoint (the simulator is not bitwise "
                          "reproducible, so borderline clips can flip); results are averaged and written to eval_r<reps>.csv")
 args = parser.parse_args()
+if args.reps <= 0 or args.group <= 0:
+    parser.error("--reps and --group must be positive")
+
+from instanttrack.wandb_logger import create_evaluation_logger, log_evaluation_metrics
+
+wandb_logger = None
+if args.wandb or args.wandb_debug:
+    wandb_logger = create_evaluation_logger(args.run_dir, debug=args.wandb_debug, reps=args.reps)
+    atexit.register(wandb_logger.finish)
 
 import torch
 
@@ -124,6 +137,13 @@ if os.path.exists(out_csv):
     done = {int(line.split(",")[0]) for line in open(out_csv).read().strip().splitlines()[1:]}
 else:
     open(out_csv, "w").write("iteration,train_wall_h,saved_at,eval_at,norm_return,norm_return_framew,n_failed,failed\n")
+if wandb_logger is not None:
+    # Replay persisted results on retry: a prior evaluation may have saved CSV before upload.
+    # Repeated points retain the same explicit evaluation iteration axis.
+    with open(out_csv, newline="") as stream:
+        for record in csv.DictReader(stream):
+            log_evaluation_metrics(wandb_logger, record, iteration=int(record["iteration"]),
+                                   train_wall_h=float(record["train_wall_h"]), n_clips=C, reps=args.reps)
 todo = [c for c in sorted(glob.glob(os.path.join(args.run_dir, "ckpt_*.pt"))) if int(os.path.basename(c)[5:11]) not in done]
 print(f"{len(todo)} checkpoints to evaluate in groups of {args.group}", flush=True)
 if done and todo:  # the simulator is not bitwise reproducible: a different group layout can flip borderline clips
@@ -145,5 +165,11 @@ for s in range(0, len(todo), args.group):
                          "motion": MOTION_ID}  # fmt: skip
         open(out_csv, "a").write(line)
         json.dump(res, open(p.replace(".pt", f"_eval{SUFFIX}.json"), "w"), indent=1)
+        if wandb_logger is not None:
+            log_evaluation_metrics(wandb_logger, res, iteration=it,
+                                   train_wall_h=ck["wall_time"] / 3600, n_clips=C, reps=args.reps)
         print(f"[eval] it {it} ({ck['wall_time'] / 3600:.2f} h): norm return {res['norm_return']:.4f}, failed {res['n_failed']}/{C}", flush=True)
     print(f"group of {len(paths)} in {time.time() - t0:.0f}s", flush=True)
+if wandb_logger is not None:
+    wandb_logger.finish()
+    atexit.unregister(wandb_logger.finish)
